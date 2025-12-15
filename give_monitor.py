@@ -61,3 +61,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+send_telegram("✅ 測試通知：Give 監控系統已成功運作")
