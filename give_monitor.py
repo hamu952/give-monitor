@@ -1,64 +1,68 @@
 import requests
-import time
 from bs4 import BeautifulSoup
-from datetime import datetime
+import os
 
-TOKEN = "8496899351:AAHP0QR0NT95n0w_Xmr37fHKnmtaj6u4bA0"
-CHAT_ID = "8350104730"
+# ===== 監控設定 =====
+SEARCH_URL = "https://www.give-circle.com/search?keyword="
+KEYWORDS = ["香水", "香氛", "小香", "coach", "jo malone"]
 
-KEYWORDS = ["香水", "香氛", "小香", "coach"]
+BOT_TOKEN = os.environ.get("TG_BOT_TOKEN")
+CHAT_ID = os.environ.get("TG_CHAT_ID")
 
-BASE_URL = "https://www.give-circle.com/give/"
-START_ID = 1065459      # 已知存在的 ID
-CHECK_RANGE = 40        # 往回檢查筆數
+SEEN_FILE = "seen.txt"
 
-# 用來避免同一分鐘內重複通知
-notified_urls = set()
 
-def send_telegram(msg):
-    url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
-    requests.post(url, data={"chat_id": CHAT_ID, "text": msg})
+def send_telegram(message):
+    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
+    payload = {
+        "chat_id": CHAT_ID,
+        "text": message,
+        "disable_web_page_preview": False
+    }
+    requests.post(url, data=payload)
 
-def scan_once(tag):
-    found_any = False
-    for item_id in range(START_ID, START_ID - CHECK_RANGE, -1):
-        url = BASE_URL + str(item_id)
-        if url in notified_urls:
-            continue
 
-        try:
-            r = requests.get(url, timeout=10)
-        except requests.RequestException:
-            continue
+def load_seen():
+    if not os.path.exists(SEEN_FILE):
+        return set()
+    with open(SEEN_FILE, "r", encoding="utf-8") as f:
+        return set(line.strip() for line in f.readlines())
 
-        if r.status_code != 200:
-            continue
 
-        soup = BeautifulSoup(r.text, "html.parser")
-        title = soup.title.string if soup.title else ""
-        text = soup.get_text()
-        content = (title + text).lower()
+def save_seen(seen):
+    with open(SEEN_FILE, "w", encoding="utf-8") as f:
+        for link in sorted(seen):
+            f.write(link + "\n")
 
-        for kw in KEYWORDS:
-            if kw.lower() in content:
-                send_telegram(
-                    f"🎁【30秒監控-{tag}】發現關鍵字【{kw}】\n{url}"
-                )
-                notified_urls.add(url)
-                found_any = True
-                break
-    return found_any
 
 def main():
-    # 第一次掃描（T=0s）
-    scan_once("第1次")
+    seen = load_seen()
+    headers = {"User-Agent": "Mozilla/5.0"}
+    found_links = set()
 
-    # 等 30 秒
-    time.sleep(30)
+    for kw in KEYWORDS:
+        url = SEARCH_URL + kw
+        res = requests.get(url, headers=headers, timeout=20)
+        soup = BeautifulSoup(res.text, "html.parser")
 
-    # 第二次掃描（T=30s）
-    scan_once("第2次")
+        for a in soup.select("a[href^='/give/']"):
+            title = a.get_text(strip=True)
+            href = a["href"]
+            title_lower = title.lower()
+
+            if kw.lower() in title_lower:
+                full_url = "https://www.give-circle.com" + href
+                found_links.add(full_url)
+
+    new_links = found_links - seen
+
+    for link in new_links:
+        send_telegram(f"🎁 發現新的關鍵字贈物：\n{link}")
+
+    if new_links:
+        seen.update(new_links)
+        save_seen(seen)
+
 
 if __name__ == "__main__":
     main()
-send_telegram("✅ 測試通知：Give 監控系統已成功運作")
